@@ -1,0 +1,18 @@
+# --- Shared ---
+streamlit==1.38.0
+pandas==2.2.2
+numpy==1.26.4
+pyyaml==6.0.2
+pytest==8.3.2
+
+# --- Person A: retrieval track ---
+pdfplumber==0.11.4
+PyMuPDF==1.24.10
+sentence-transformers==3.0.1
+faiss-cpu==1.8.0.post1
+nltk==3.9.1
+
+# --- Person B: flagging track ---
+transformers==4.44.2
+torch==2.4.1
+scikit-learn==1.5.1
