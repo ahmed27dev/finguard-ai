@@ -1,0 +1,40 @@
+{
+  "a_000": {
+    "genuine": true,
+    "rule": "ratio_shift",
+    "supported": false
+  },
+  "a_001": {
+    "genuine": true,
+    "rule": "ratio_shift",
+    "supported": true,
+    "evidence_correct": true
+  },
+  "a_002": {
+    "genuine": true,
+    "rule": "sustained_trend",
+    "supported": true,
+    "evidence_correct": true
+  },
+  "a_003": {
+    "genuine": false,
+    "rule": "magnitude",
+    "supported": false
+  },
+  "a_004": {
+    "genuine": false,
+    "rule": "divergence",
+    "supported": false
+  },
+  "a_005": {
+    "genuine": false,
+    "rule": "sustained_trend",
+    "supported": true,
+    "evidence_correct": false
+  },
+  "a_006": {
+    "genuine": true,
+    "rule": "magnitude",
+    "supported": false
+  }
+}

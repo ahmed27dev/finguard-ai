@@ -1,0 +1,13 @@
+{
+  "a_000": {
+    "genuine": true,
+    "rule": "magnitude",
+    "supported": false
+  },
+  "a_001": {
+    "genuine": true,
+    "rule": "magnitude",
+    "supported": true,
+    "evidence_correct": false
+  }
+}

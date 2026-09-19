@@ -1,34 +1,81 @@
-# Shared configuration — do not fork this into two versions.
-# If you need a new setting, add it here and tell the other person.
+# FinGuard AI - parameters of record.
+#
+# Every value here mirrors a constant in the code. They are documented in one
+# place because the report quotes them and because a reader needs to know what
+# the system was actually configured with when the results were produced.
+#
+# tests/test_config.py asserts that each value matches its module. Change a
+# constant without changing this file and that test fails, which is the point:
+# a configuration file that drifts from the code is worse than none, because
+# it is read as truth.
 
 paths:
-  raw_data_dir: 'data/raw'
-  processed_data_dir: 'data/processed'
-  finqa_train: 'data/raw/FinQA/dataset/train.json'
-  finqa_dev: 'data/raw/FinQA/dataset/dev.json'
-  finqa_test: 'data/raw/FinQA/dataset/test.json'
-  faiss_index_path: 'data/processed/faiss_index.bin'
+  filings_dir: 'data/filings' # downloaded 10-K HTML
+  processed_dir: 'data/processed' # per-filing artifacts
+  finqa_dir: 'data/finqa' # FinQA splits for retrieval evaluation
+  labels_dir: 'data/labels' # hand labels for flagging evaluation
+  results_dir: 'data/results'
+  # Indexes are per filing: data/processed/<filing_id>.faiss
 
 models:
   bi_encoder: 'sentence-transformers/all-MiniLM-L6-v2'
   cross_encoder: 'cross-encoder/ms-marco-MiniLM-L-6-v2'
   generator: 'google/flan-t5-base'
-  nli_model: 'roberta-large-mnli'
+  nli_model: 'cross-encoder/nli-deberta-v3-small'
+
+parsing:
+  # How far back from a table to look for a units declaration, in text blocks.
+  scale_lookback_blocks: 3
+
+chunking:
+  # Characters, not tokens. all-MiniLM-L6-v2 truncates at 256 word-pieces,
+  # roughly 1000 characters, and discards the rest without warning.
+  target_chars: 800
+  max_chars: 1000
+  overlap_chars: 120
+  merge_below_chars: 120 # only fragments shorter than this are merged
+  standalone_min_chars: 70 # a complete sentence this long stands alone
 
 retrieval:
-  bi_encoder_top_k: 20
-  cross_encoder_top_k: 5
-  chunk_size_tokens: 300
-  chunk_overlap_tokens: 50
+  bi_encoder_top_k: 20 # stage 1 shortlist, tuned for recall
+  cross_encoder_top_k: 3 # what the generator sees
+  min_support_score: 1.0 # necessary, not sufficient - see retrieve.py
+  # Support also requires: a text chunk (not a table row), every anchor term
+  # present, and causal phrasing when the anchor is a single word.
 
 anomaly_detection:
-  yoy_change_threshold_pct: 20
-  tracked_metrics:
+  divergence_min_gap_pp: 10.0 # between two metrics that should track
+  segment_min_gap_pp: 8.0 # segment against company total, one year
+  sustained_min_gap_pp: 12.0 # segment against total, whole span
+  magnitude_threshold_pct: 15.0 # headline metrics only
+  magnitude_aligned_pp: 8.0 # within this of revenue growth: not a flag
+  revenue_threshold_pct: 25.0 # revenue has no baseline of its own
+
+  # Canonical metric names produced by metric_extractor.py. Labels are mapped
+  # onto these so rules work across filers with different wording.
+  canonical_metrics:
     - 'revenue'
+    - 'cost_of_revenue'
+    - 'gross_profit'
+    - 'operating_expenses'
+    - 'operating_income'
+    - 'pretax_income'
+    - 'tax_provision'
     - 'net_income'
-    - 'total_debt'
-    - 'operating_margin'
-    - 'cash_flow'
+    - 'rnd_expense'
+    - 'sga_expense'
+    - 'operating_cash_flow'
+    - 'total_assets'
+    - 'total_liabilities'
+    - 'equity'
+    - 'current_assets'
+    - 'current_liabilities'
+    - 'cash'
+    - 'inventory'
+    - 'receivables'
+    - 'term_debt'
 
 faithfulness:
-  min_faithfulness_score: 0.6
+  entailment_min: 0.50
+  # A claim also has to introduce no figure absent from the evidence and
+  # assert no cause the evidence did not state.

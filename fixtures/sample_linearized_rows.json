@@ -1,0 +1,87 @@
+[
+  {
+    "row_id": "tb_0002_r3",
+    "table_id": "tb_0002",
+    "page": 22,
+    "section": "Item 7 - MD&A",
+    "label": "Greater China",
+    "layout": "wide",
+    "period": null,
+    "scale": "millions",
+    "values": {
+      "2025": 64377.0,
+      "2024": 66952.0,
+      "2023": 72559.0
+    },
+    "linear": "Greater China (in millions): 2025: 64,377 | 2024: 66,952 | 2023: 72,559"
+  },
+  {
+    "row_id": "tb_0002_r6",
+    "table_id": "tb_0002",
+    "page": 22,
+    "section": "Item 7 - MD&A",
+    "label": "Total net sales",
+    "layout": "wide",
+    "period": null,
+    "scale": "millions",
+    "values": {
+      "2025": 416161.0,
+      "2024": 391035.0,
+      "2023": 383285.0
+    },
+    "linear": "Total net sales (in millions): 2025: 416,161 | 2024: 391,035 | 2023: 383,285"
+  },
+  {
+    "row_id": "merged_0014",
+    "table_id": "merged",
+    "page": 47,
+    "section": "Item 8 - Financial Statements",
+    "label": "Operating income/(loss) - Greater China",
+    "layout": "merged_series",
+    "period": null,
+    "scale": "millions",
+    "values": {
+      "2025": 26917.0,
+      "2024": 27082.0,
+      "2023": 30328.0
+    },
+    "linear": "Operating income/(loss) - Greater China (in millions): 2025: 26,917 | 2024: 27,082 | 2023: 30,328",
+    "source_row_ids": ["tb_0036_r4", "tb_0037_r4", "tb_0038_r4"]
+  },
+  {
+    "row_id": "merged_0018",
+    "table_id": "merged",
+    "page": 47,
+    "section": "Item 8 - Financial Statements",
+    "label": "Operating income/(loss) - Total",
+    "layout": "merged_series",
+    "period": null,
+    "scale": "millions",
+    "values": {
+      "2025": 133050.0,
+      "2024": 123216.0,
+      "2023": 114301.0
+    },
+    "linear": "Operating income/(loss) - Total (in millions): 2025: 133,050 | 2024: 123,216 | 2023: 114,301",
+    "source_row_ids": ["tb_0036_r4", "tb_0037_r4", "tb_0038_r4"]
+  },
+  {
+    "row_id": "tb_0036_r2",
+    "table_id": "tb_0036",
+    "page": 47,
+    "section": "Item 8 - Financial Statements",
+    "label": "Net sales",
+    "layout": "stacked",
+    "period": "2025",
+    "scale": "millions",
+    "values": {
+      "Americas": 178353.0,
+      "Europe": 111032.0,
+      "Greater China": 64377.0,
+      "Japan": 28703.0,
+      "Rest of Asia Pacific": 33696.0,
+      "Total": 416161.0
+    },
+    "linear": "Net sales for 2025 (in millions): Americas: 178,353 | Europe: 111,032 | Greater China: 64,377 | Japan: 28,703 | Rest of Asia Pacific: 33,696 | Total: 416,161"
+  }
+]

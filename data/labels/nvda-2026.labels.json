@@ -1,0 +1,39 @@
+{
+  "a_000": {
+    "genuine": false,
+    "rule": "ratio_shift",
+    "supported": false
+  },
+  "a_001": {
+    "genuine": true,
+    "rule": "magnitude",
+    "supported": false
+  },
+  "a_002": {
+    "genuine": false,
+    "rule": "magnitude",
+    "supported": true,
+    "evidence_correct": true
+  },
+  "a_003": {
+    "genuine": false,
+    "rule": "magnitude",
+    "supported": false
+  },
+  "a_004": {
+    "genuine": true,
+    "rule": "ratio_shift",
+    "supported": true,
+    "evidence_correct": true
+  },
+  "a_005": {
+    "genuine": false,
+    "rule": "ratio_shift",
+    "supported": false
+  },
+  "a_006": {
+    "genuine": true,
+    "rule": "ratio_shift",
+    "supported": false
+  }
+}

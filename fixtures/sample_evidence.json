@@ -1,0 +1,26 @@
+[
+  {
+    "text": "Greater China net sales decreased during 2025 compared to 2024 primarily due to lower net sales of iPhone, partially offset by higher net sales of Mac.",
+    "source_type": "text",
+    "chunk_id": "t_00211",
+    "page": 22,
+    "section": "Item 7 - Management's Discussion and Analysis",
+    "score": 0.87
+  },
+  {
+    "text": "Greater China (in millions): 2025: 64,377 | 2024: 66,952 | 2023: 72,559",
+    "source_type": "table",
+    "chunk_id": "tb_0002_r3",
+    "page": 22,
+    "section": "Item 7 - Management's Discussion and Analysis",
+    "score": 0.81
+  },
+  {
+    "text": "The Company's proportion of net sales by disaggregated revenue source was generally consistent for each reportable segment, except in Greater China, where iPhone revenue represented a moderately higher proportion of net sales.",
+    "source_type": "text",
+    "chunk_id": "t_00312",
+    "page": 36,
+    "section": "Item 8 - Financial Statements and Supplementary Data",
+    "score": 0.64
+  }
+]
