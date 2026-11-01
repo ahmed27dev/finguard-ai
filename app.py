@@ -527,6 +527,78 @@ def render_entry(item: dict, metrics: dict[str, dict]) -> str:
     )
 
 
+def remove_filing(filing_id: str) -> list[str]:
+    """Delete everything stored for one filing; return what was removed.
+
+    Matches on the filing id as a whole name or as the stem before a dot,
+    so removing "ko-20241231" cannot touch "ko-20241231-b" or another
+    company. Looks under data/ because the pipeline writes the source,
+    chunks, metrics and verified results to separate places.
+    """
+    import shutil
+    removed: list[str] = []
+    root = Path("data")
+    if not root.exists() or not filing_id:
+        return removed
+    for p in sorted(root.rglob("*")):
+        stem = p.name.split(".")[0] if p.is_file() else p.name
+        if stem != filing_id:
+            continue
+        try:
+            if p.is_dir():
+                shutil.rmtree(p)
+            elif p.exists():
+                p.unlink()
+            removed.append(str(p))
+        except OSError:
+            pass
+    load_json.clear()
+    filing_identity.clear()
+    return removed
+
+
+def report_html(title: str, masthead: str, entries: list[str],
+                view_label: str) -> str:
+    """One self-contained page the reader can print or save as PDF.
+
+    Cited passages are opened because a collapsed <details> prints as
+    nothing. The sidebar and controls are not part of it.
+    """
+    body = "".join(e.replace("<details class='cite'",
+                             "<details class='cite' open")
+                   for e in entries)
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<title>FinGuard - {esc(title)}</title>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"{STYLES}"
+        "<style>"
+        "body { margin: 0; background: #fff; color: var(--ink);"
+        " font-family: 'IBM Plex Sans', system-ui, sans-serif; }"
+        ".page { max-width: 60rem; margin: 0 auto; padding: 2.4rem 1.6rem; }"
+        ".printbar { display: flex; gap: 1rem; align-items: center;"
+        " margin-bottom: 1.4rem; font-size: .85rem; color: var(--ink-soft); }"
+        ".printbar button { font: inherit; padding: .4rem .9rem;"
+        " border: 1px solid var(--rule-firm); background: #fff;"
+        " border-radius: 4px; cursor: pointer; }"
+        "@media print {"
+        " .printbar { display: none; }"
+        " .page { padding: 0; max-width: none; }"
+        " .entry { break-inside: avoid; }"
+        " @page { margin: 16mm 14mm; }"
+        "}"
+        "</style></head><body><div class='page'>"
+        "<div class='printbar'>"
+        "<button onclick='window.print()'>Print or save as PDF</button>"
+        f"<span>{esc(view_label)}</span></div>"
+        f"{masthead}{body}"
+        "<p class='footnote'>FinGuard flags areas for review. It is not an "
+        "audit, a fraud detector, or investment advice; every concern needs "
+        "a human judgement.</p>"
+        "</div></body></html>"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
@@ -540,6 +612,11 @@ st.sidebar.caption(
 
 filings = available_filings()
 
+# A new filing is selected by leaving a note here and rerunning; Streamlit
+# does not allow changing the dropdown's value after it has been drawn.
+if "pending_choice" in st.session_state:
+    st.session_state["filing_choice"] = st.session_state.pop("pending_choice")
+
 if "filing_choice" in st.session_state and \
         st.session_state["filing_choice"] not in filings:
     del st.session_state["filing_choice"]
@@ -549,25 +626,39 @@ choice = st.sidebar.selectbox(
     key="filing_choice", disabled=not filings)
 
 st.sidebar.divider()
+uploader_key = f"uploader_{st.session_state.get('uploader_n', 0)}"
 uploaded = st.sidebar.file_uploader(
-    "Analyse another filing", type=["htm", "html"],
+    "Analyse another filing", type=["htm", "html"], key=uploader_key,
     help="SEC EDGAR serves 10-K filings as HTML. Download the primary "
          "document from the filing index page.")
 
 if uploaded is not None:
     name = Path(uploaded.name).stem
-    FILINGS.mkdir(parents=True, exist_ok=True)
-    (FILINGS / f"{name}.htm").write_bytes(uploaded.getvalue())
     if st.sidebar.button(f"Analyse {name}", type="primary"):
+        FILINGS.mkdir(parents=True, exist_ok=True)
+        (FILINGS / f"{name}.htm").write_bytes(uploaded.getvalue())
         warm_models()
         run_full_pipeline(name, force=True)
-        st.session_state["filing_choice"] = name
+        st.session_state["pending_choice"] = name
+        # A fresh key empties the uploader, so the file is not re-saved
+        # on every rerun and the box is clear for the next filing.
+        st.session_state["uploader_n"] = st.session_state.get("uploader_n", 0) + 1
         st.rerun()
 
 if filings and st.sidebar.button("Run the analysis again"):
     warm_models()
     run_full_pipeline(choice, force=True)
     st.rerun()
+
+if filings:
+    with st.sidebar.expander("Remove this filing"):
+        st.caption(f"Deletes {choice} and its results from this computer. "
+                   "The analysis would have to be run again.")
+        sure = st.checkbox("Yes, remove it", key=f"sure_{choice}")
+        if st.button("Remove", disabled=not sure, key=f"rm_{choice}"):
+            remove_filing(choice)
+            st.session_state.pop("filing_choice", None)
+            st.rerun()
 
 if not filings:
     st.markdown(
@@ -609,15 +700,160 @@ strip = "".join(
     for k, v in facts)
 strip = f"<dl class='facts'>{strip}</dl>" if strip else ""
 
-st.markdown(
+masthead_html = (
     f"<div class='masthead'><h1>{esc(title)}</h1>{strip}"
     f"<p class='scope'>{esc(scope)}. {len(explained)} explained by the "
     f"filing, {len(unexplained)} left unexplained.</p>"
     f"<p class='basis'>Concerns come from arithmetic over the filing's own "
     f"tables. No language model decides what is flagged; it only reads the "
     f"passage retrieved for a concern already raised. Shaded figures are "
-    f"the periods a concern was computed from.</p></div>",
-    unsafe_allow_html=True)
+    f"the periods a concern was computed from.</p></div>")
+st.markdown(masthead_html, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Charts, as a separate view rather than mixed into the entries. The reading
+# page is built around the figures themselves, and a chart beside them would
+# compete with the numbers the project asks a reader to check by hand.
+# ---------------------------------------------------------------------------
+st.sidebar.divider()
+view = st.sidebar.radio("View", ["Concerns", "Charts"], key="view_mode")
+
+if view == "Charts":
+    import altair as alt
+    import pandas as pd
+
+    TONE = {"explained": "#0F6B4F", "unexplained": "#8A5115",
+            "unsupported": "#9B1C1C"}
+
+    def clip(text, n):
+        """Trim to n characters on a word boundary, with an ellipsis."""
+        text = (text or "").strip()
+        if len(text) <= n:
+            return text
+        cut = text[:n].rsplit(" ", 1)[0]
+        return (cut or text[:n]) + "\u2026"
+
+    def metric_label(item, index, fallback):
+        """The metric's own name, looked up in the extracted metrics.
+
+        The saved results carry metric_ids but not the labels, so the name
+        has to be fetched rather than read off the finding.
+        """
+        ids = item.get("metric_ids") or []
+        if index < len(ids):
+            row = metrics.get(ids[index]) or {}
+            if row.get("label"):
+                return row["label"]
+        return fallback
+
+    def verdict_word(item):
+        v = item.get("verdict")
+        if v in {"supported", "verbatim"}:
+            return "explained"
+        return "unsupported" if v == "not_supported" else "unexplained"
+
+    st.markdown("##### Concerns by severity")
+    st.caption("Severity orders findings inside this filing. Colour is the "
+               "verdict. Hover for the rule.")
+    df = pd.DataFrame([{
+        "concern": clip(i.get("finding"), 64),
+        "severity": round(float(i.get("severity") or 0), 2),
+        "verdict": verdict_word(i),
+        "rule": str(i.get("rule", "")).replace("_", " "),
+    } for i in items])
+    present = [v for v in TONE if v in set(df["verdict"])]
+    st.altair_chart(
+        alt.Chart(df).mark_bar(size=15, cornerRadius=2).encode(
+            x=alt.X("severity:Q", title="severity",
+                    scale=alt.Scale(domain=[0, 1])),
+            y=alt.Y("concern:N", title=None, sort="-x",
+                    axis=alt.Axis(labelLimit=360, labelFontSize=12,
+                                  labelPadding=8)),
+            color=alt.Color("verdict:N", title=None,
+                            scale=alt.Scale(domain=present,
+                                            range=[TONE[v] for v in present]),
+                            legend=alt.Legend(orient="bottom")),
+            tooltip=["concern", "rule", "severity", "verdict"],
+        ).properties(height=max(150, 40 * len(df))),
+        use_container_width=True)
+
+    st.markdown("##### Which rules fired")
+    st.caption("Five arithmetic rules run on every filing. The mix differs by "
+               "company.")
+    counts: dict[str, int] = {}
+    for i in items:
+        name = str(i.get("rule", "")).replace("_", " ")
+        counts[name] = counts.get(name, 0) + 1
+    rules_df = pd.DataFrame({"rule": list(counts),
+                             "concerns": list(counts.values())})
+    st.altair_chart(
+        alt.Chart(rules_df).mark_bar(size=15, cornerRadius=2,
+                                     color="#5A6B7B").encode(
+            x=alt.X("concerns:Q", title="concerns",
+                    axis=alt.Axis(tickMinStep=1, format="d")),
+            y=alt.Y("rule:N", title=None, sort="-x",
+                    axis=alt.Axis(labelFontSize=12, labelPadding=8)),
+            tooltip=["rule", "concerns"],
+        ).properties(height=max(110, 40 * len(rules_df))),
+        use_container_width=True)
+
+    moves = []
+    for i in items:
+        detail = i.get("detail") or {}
+        rule = i.get("rule")
+
+        def num(key, d=detail):
+            v = d.get(key)
+            return float(v) if isinstance(v, (int, float)) else None
+
+        pairs = []
+        if rule == "divergence":
+            for key, value in detail.items():
+                if key in {"periods", "gap_pp"} or not isinstance(value, (int, float)):
+                    continue
+                pairs.append((key.replace("_", " "), float(value)))
+        elif rule in {"segment_vs_total", "sustained_trend"}:
+            a_key, b_key = (("segment", "total") if rule == "segment_vs_total"
+                            else ("segment_span", "total_span"))
+            a, b = num(a_key), num(b_key)
+            if a is not None and b is not None:
+                pairs = [(clip(metric_label(i, 0, "this segment"), 34), a),
+                         ("company total", b)]
+        elif rule == "magnitude":
+            a, b = num("change"), num("revenue_change")
+            if a is not None and b is not None:
+                pairs = [(clip(metric_label(i, 0, "this metric"), 34), a),
+                         ("revenue", b)]
+        if len(pairs) != 2:
+            continue
+        for name, value in pairs:
+            moves.append({"finding": clip(i.get("finding"), 78),
+                          "metric": name, "change": round(value, 1)})
+
+    st.markdown("##### What moved against what")
+    st.caption("Each pair of changes either side of zero. The gap is what the "
+               "rule fired on.")
+    if moves:
+        moves_df = pd.DataFrame(moves)
+        st.altair_chart(
+            alt.Chart(moves_df).mark_bar(size=13, cornerRadius=2).encode(
+                x=alt.X("change:Q", title="change over the period (%)"),
+                y=alt.Y("metric:N", title=None, sort=None,
+                        axis=alt.Axis(labelFontSize=11, labelLimit=240)),
+                color=alt.condition(alt.datum.change >= 0,
+                                    alt.value("#2F5D8A"), alt.value("#8A5115")),
+                tooltip=["finding", "metric", "change"],
+            ).properties(height=46, width=430).facet(
+                row=alt.Row("finding:N", title=None,
+                            header=alt.Header(labelFontSize=11,
+                                              labelOrient="top",
+                                              labelAnchor="start",
+                                              labelLimit=600, labelPadding=0,
+                                              labelFontWeight="bold")),
+            ).resolve_scale(y="independent"))
+    else:
+        st.caption("No comparative findings in this filing.")
+    st.stop()
 
 groups = {
     f"Everything ({len(items)})": items,
@@ -632,6 +868,15 @@ show = st.sidebar.radio(
          "filing contains no passage accounting for it.")
 
 selected = groups[show]
+
+if selected:
+    st.sidebar.divider()
+    st.sidebar.download_button(
+        "Download printable report",
+        data=report_html(title, masthead_html,
+                         [render_entry(i, metrics) for i in selected], show),
+        file_name=f"finguard-{choice}.html", mime="text/html",
+        help="Opens in your browser. Press Print, then choose Save as PDF.")
 
 if not selected:
     st.info("Nothing in this category for this filing.")
