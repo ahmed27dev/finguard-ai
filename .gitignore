@@ -1,36 +1,40 @@
-# Virtual environment. The folder is .venv, and a pattern of "venv/"
-# does not match it - which would have committed torch and every model
-# dependency.
+# Filings and everything derived from them. A single 10-K is several MB and
+# the processed JSON is larger again; both are reproducible from the source
+# filing, so neither belongs in the repository.
+data/filings/*
+data/processed/*
+data/raw/*
+!data/filings/.gitkeep
+!data/processed/.gitkeep
+!data/raw/.gitkeep
+
+# FAISS indexes
+*.faiss
+*.index
+
+# Model caches, if anything downloads into the project
+.cache/
+models/
+*.bin
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Environments
 .venv/
 venv/
 env/
 
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-.streamlit/
-
-# Downloaded filings. Regenerable with:
-#   python -m retrieval.fetch_filing <TICKER>
-data/filings/*
-data/raw/*
-
-# Pipeline artifacts: parsed JSON, chunks, FAISS indexes, metrics,
-# anomalies, explanations. All rebuilt by:
-#   python pipeline.py --all --force
-data/processed/*
-data/results/*
-
-# FinQA (~106 MB). Downloaded with the command in eval_retrieval.py.
-data/finqa/*
-
-# Keep the directory structure so a fresh clone runs without mkdir.
-!data/**/.gitkeep
-
-# data/labels/ is deliberately NOT ignored. The hand labels are original
-# work and the flagging evaluation cannot be reproduced without them.
-
-.env
+# Editors and OS
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
+
+# Generated reports
+finguard-*.html
