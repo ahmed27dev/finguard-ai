@@ -48,6 +48,16 @@ SCALE_DECL_RE = re.compile(r"\bin\s+(thousands|millions|billions)\b", re.I)
 SCALE_LOOKBACK = 3  # blocks
 
 
+# Filers that print no footer line still print the page number on its own,
+# as a bare block containing nothing but digits. Counting page-break elements
+# gives a correct sequence but starts at the cover page, so it runs ahead of
+# the printed numbering by however many pages precede page 1. These marks let
+# that offset be measured and removed instead of guessed.
+BARE_PAGE_RE = re.compile(r"\d{1,3}")
+PAGE_MARK_MIN = 5       # marks needed before an offset is trusted
+PAGE_MARK_WINDOW = 30   # a mark further than this from the count is not a page number
+
+
 # A heading line that is really a table-of-contents row, e.g. "Item 1. Business 1"
 TOC_TAIL_RE = re.compile(r"\s\d{1,3}$")
 
@@ -309,6 +319,8 @@ def parse_filing(source: str | Path | bytes, filing_id: str | None = None) -> di
     last_scale: str | None = None
     last_scale_at = -99
     block_no = 0
+    # counted page -> the printed number seen on it
+    page_marks: dict[int, int] = {}
 
     for el in soup.find_all(True):
         if not use_footers and _is_page_break(el):
@@ -330,6 +342,14 @@ def parse_filing(source: str | Path | bytes, filing_id: str | None = None) -> di
         text = _clean(_own_text(el))
         if not text:
             continue
+
+        # A block that is nothing but a number is the printed page number.
+        # Recorded, not acted on: one stray figure must not move the count,
+        # so the offset is decided from all of them together after the walk.
+        if not use_footers and BARE_PAGE_RE.fullmatch(text):
+            printed = int(text)
+            if 0 < printed <= 400 and abs(printed - page) <= PAGE_MARK_WINDOW:
+                page_marks.setdefault(page, printed)
 
         # Page footer: authoritative page number for everything that follows.
         if use_footers:
@@ -371,6 +391,26 @@ def parse_filing(source: str | Path | bytes, filing_id: str | None = None) -> di
         t.setdefault("page", 0)
         t.setdefault("section", "Unknown")
 
+    # Align the counted pages with the printed ones. A single offset is used
+    # rather than per-page correction: the gap is the unnumbered front matter
+    # and so is constant, and an agreeing majority is required before any
+    # correction is applied. With too few marks, or marks that disagree,
+    # nothing changes and the counted sequence stands.
+    offset = 0
+    if len(page_marks) >= PAGE_MARK_MIN:
+        diffs = sorted(printed - counted for counted, printed in page_marks.items())
+        median = diffs[len(diffs) // 2]
+        if sum(1 for d in diffs if d == median) >= max(PAGE_MARK_MIN,
+                                                       int(0.6 * len(diffs))):
+            offset = median
+
+    if offset:
+        for b in text_blocks:
+            b["page"] = max(1, b["page"] + offset)
+        for t in tables:
+            if t.get("page"):
+                t["page"] = max(1, t["page"] + offset)
+
     return {
         "filing_id": filing_id,
         "text_blocks": text_blocks,
@@ -378,7 +418,11 @@ def parse_filing(source: str | Path | bytes, filing_id: str | None = None) -> di
         "_sections_found": tracker.sections_found,
         "_page_method": (
             f"footer ({footer_hits})" if use_footers
-            else f"page-break ({break_elements})" if break_elements
+            else (f"page-break ({break_elements})"
+                  + (f", aligned {offset:+d} against {len(page_marks)} "
+                     f"printed numbers" if offset else
+                     f", {len(page_marks)} printed numbers found"
+                     if page_marks else "")) if break_elements
             else "NONE - pages unreliable"),
     }
 
