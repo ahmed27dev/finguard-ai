@@ -1,207 +1,250 @@
 # FinGuard AI
 
-Reads a 10-K filing, finds financial changes worth an analyst's attention,
-retrieves management's account of each one from the filing itself, and checks
-that the account actually supports the explanation given.
-
-The design constraint that shapes everything: **no language model decides what
-is flagged.** Concerns come from arithmetic over the filing's own tables, so
-every flag can be recomputed by hand from the figures shown alongside it. The
-model's only job is to read the retrieved passage, and a separate verifier
-checks what it wrote against that passage.
+Finds unusual financial changes in an SEC 10-K filing by arithmetic, then
+retrieves and verifies what management wrote about each one.
+![FinGuard dashboard](docs/dashboard.png)
+Built for the Natural Language Processing Lab (TEE7100), Symbiosis Institute
+of Technology, Pune. Faculty: Dr. Payal Kadam.
 
 ---
 
-## What it does
+## The claim
+
+A language model should not be the component that decides what is suspicious.
+
+In FinGuard, anomalies are found by arithmetic over figures parsed from the
+filing's own tables. A model is admitted only afterwards, and only to extract
+what the document says about a finding that already exists. Its output is then
+checked against the passage it cited by a separate entailment model.
+
+The consequence that matters: because the finding exists _before_ retrieval
+runs, the system can report that a filing contains **no explanation** for a
+change it detected. A question-driven tool cannot produce that output, because
+without a question there is nothing whose absence can be noticed.
+
+---
+
+## Pipeline
 
 ```
-10-K (HTML)
-   │
-   ├─ parse ──── text blocks + tables, with page and Item section
-   ├─ linearize ─ table rows as sentences AND {year: value} series
-   ├─ chunk ───── retrievable units, never spanning a page boundary
-   └─ index ───── FAISS over all chunks
-   │
-   ├─ extract ─── canonical metrics (revenue, operating income, ...)
-   ├─ detect ──── ARITHMETIC ONLY: divergence, sustained trend,
-   │              ratio shift, magnitude
-   ├─ retrieve ── bi-encoder (top 20) → cross-encoder (top 3)
-   ├─ generate ── FLAN-T5 extracts the cause from the passage
-   └─ verify ──── NLI entailment + numeric + causal checks
+10-K filing (HTML)
+        |
+ 1. Document layer      parse -> linearize tables -> chunk
+        |               BeautifulSoup + our own code
+        v
+ 2. Index and search    MiniLM embeddings -> FAISS (top 20) -> cross-encoder (top 3)
+        |                                                   the R in RAG
+        v
+ 3. Detection           metric series -> five arithmetic rules -> a finding
+        |               no model is involved
+        v
+ 4. Explanation         query from the finding -> support test -> FLAN-T5 extracts
+        |                                                   the G in RAG
+        v
+ 5. Verification        DeBERTa NLI entails it from the same passage, pass 0.50
+        |
+        v
+ 6. Dashboard           concern + figures + cited passage + verdict + printable report
 ```
 
-An anomaly with no supporting passage is reported as **unexplained**, not
-hidden. That case is often the most useful output: the arithmetic found a
-real change and management never addressed it.
+### The five detection rules
+
+All are plain arithmetic with fixed thresholds, in `flagging/anomaly_detector.py`.
+
+| Rule               | Fires when                                                               | Threshold                                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `divergence`       | two related metrics move in opposite directions                          | 10 pp gap                                                                                                                                 |
+| `sustained_trend`  | a segment moves one way in every period while its parent moves the other | 12 pp over the span                                                                                                                       |
+| `segment_vs_total` | a segment moves against the company total                                | 8 pp gap                                                                                                                                  |
+| `ratio_shift`      | a derived ratio moves sharply                                            | per ratio: gross margin 2 pp, operating margin 2 pp, effective tax rate 3 pp, R&D intensity 1 pp, current ratio 0.15, debt to equity 0.50 |
+| `magnitude`        | a headline metric moves a lot, and not merely with revenue               | 15% (25% for revenue itself)                                                                                                              |
+
+Each finding carries a `severity` score: the gap it measured divided by a fixed
+scale, capped at 1.0. Severity orders findings **inside one filing**; it is not
+comparable across filings and it is not a probability.
+
+### The three gates before an explanation is shown
+
+1. **Support test** — the passage must be prose rather than a table row, name
+   the metric, use causal language, and clear the reranker threshold. This is
+   what rejects a passage that only restates the number.
+2. **Extraction only** — FLAN-T5 may copy from that passage; it may not invent.
+3. **Entailment** — `nli-deberta-v3-small` must score the explanation as
+   supported by the passage, at 0.50 or above. A different model from the one
+   that wrote it, so it cannot grade its own work.
+
+Each concern ends up labelled _explanation matches source_, _explanation
+unsupported_, or _no explanation in filing_.
 
 ---
 
-## Results
+## Models
 
-Measured on four filings (Apple FY2025, Microsoft FY2026, Nvidia FY2026,
-JPMorgan FY2025) and the FinQA benchmark.
+Four pretrained models, used exactly as released. **Nothing was trained or
+fine-tuned**, and everything runs on a laptop CPU — no GPU, no API key, and no
+data leaves the machine.
 
-### Retrieval — FinQA test, 200 questions
+| Stage        | Model                                  | Type                             |
+| ------------ | -------------------------------------- | -------------------------------- |
+| Embedding    | `all-MiniLM-L6-v2` (384 dimensions)    | bi-encoder                       |
+| Reranking    | `cross-encoder/ms-marco-MiniLM-L-6-v2` | cross-encoder                    |
+| Explanation  | `google/flan-t5-base`                  | encoder-decoder, extraction only |
+| Verification | `cross-encoder/nli-deberta-v3-small`   | natural language inference       |
 
-| Mode   | System     | MRR       | R@1   | R@3   | R@20  |
-| ------ | ---------- | --------- | ----- | ----- | ----- |
-| easy   | bi-encoder | 0.752     | 0.466 | 0.723 | 0.956 |
-| easy   | + reranker | 0.798     | 0.532 | 0.761 | 0.956 |
-| pooled | bi-encoder | 0.489     | 0.273 | 0.435 | 0.700 |
-| pooled | + reranker | **0.580** | 0.351 | 0.533 | 0.700 |
-
-_easy_ scores against one FinQA example's own candidates, roughly 40–60 items.
-_pooled_ scores against every candidate across all 200 examples. The real
-system searches 751–4,837 chunks of a whole filing, so **pooled is the honest
-figure and easy overstates quality.** Both are reported.
-
-The reranker is worth three times more under realistic distractor density
-(+18.6% MRR pooled vs +6.1% easy) — with few candidates the bi-encoder rarely
-meets a hard negative.
-
-### Flagging — 16 hand-labelled concerns
-
-| Metric                  | Result |
-| ----------------------- | ------ |
-| Detection precision     | 0.562  |
-| Evidence accuracy       | 0.667  |
-| Explained by the filing | 0.375  |
-
-Recall is not reported. Establishing it would mean reading each filing in full
-and enumerating every concern the system should have raised. Precision is
-measured; recall is not estimated.
-
-_Explained by the filing_ is not an accuracy figure — it is how often
-management narrates a change the arithmetic found. The other 62.5% are the
-concerns a reader would otherwise have to find unaided.
-
-### Faithfulness — adversarial canary, 6/6
-
-The system's own explanations pass verification at 0.81–0.99 entailment, but
-that is weak evidence: the generator is extractive, so its claims are
-near-verbatim spans and entailment is close to guaranteed. The checker was
-therefore tested against deliberately wrong pairs:
-
-| Case                       | Result                                           |
-| -------------------------- | ------------------------------------------------ |
-| over-claimed cause         | rejected, 0.006                                  |
-| substituted figure         | rejected, 0.001 (and caught by the numeric test) |
-| contradiction              | rejected, 0.000                                  |
-| unrelated passage          | rejected, neutral                                |
-| faithful extraction        | passed, 0.725                                    |
-| cause stated by the filing | passed, 0.998                                    |
+Parsing, table linearization, metric extraction and all five rules are our own
+code, with no model involved.
 
 ---
 
-## Setup
+## Data
+
+**FinQA** (Chen et al., EMNLP 2021) — 9,200 financial text-and-table examples
+with annotated gold evidence. Used **only** to measure retrieval: the question
+becomes the query, the annotated evidence is the correct answer. Never used for
+training, and never loaded by the app.
+
+**Real 10-K filings** from SEC EDGAR — five filings (Apple, Microsoft, NVIDIA,
+JPMorgan Chase, Coca-Cola): 714 pages, 9,539 passages. These run the system
+end to end. Coca-Cola was held back during development and opened only at the
+end, as an unseen test.
+
+### Storage
+
+No database server. Each stage writes a file and the next stage reads it:
+
+```
+data/
+  filings/<id>.htm              the filing as downloaded
+  processed/<id>.parsed.json    text blocks and tables, with page and Item
+  processed/<id>.chunks.json    the corpus: ~800-character passages
+  processed/<id>.metrics.json   metric, period, value series
+  processed/<id>.anomalies.json what the five rules found
+  processed/<id>.verified.json  final results, with explanation and verdict
+```
+
+"Remove this filing" in the dashboard deletes exactly these.
+
+---
+
+## Install
+
+Python 3.10 or later, CPU only.
 
 ```bash
+git clone https://github.com/ahmed27dev/finguard-ai.git
+cd finguard-ai
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-SEC rejects requests without a descriptive User-Agent:
-
-```bash
-export FINGUARD_UA="Your Project Name your@email.com"
-# Windows: $env:FINGUARD_UA = "Your Project Name your@email.com"
-```
+The four models download from Hugging Face on first run (a few hundred MB) and
+are cached afterwards.
 
 ## Run
 
 ```bash
-python -m retrieval.fetch_filing AAPL        # download the latest 10-K
-python pipeline.py aapl-2025 --investigate   # parse → detect → retrieve
-python -m flagging.generator aapl-2025       # explain
-python -m flagging.faithfulness_check aapl-2025
-python -m streamlit run app.py               # dashboard
+python -m streamlit run app.py
 ```
 
-First run downloads four models, about 1.5 GB total. Everything runs on CPU.
+Then upload a 10-K **HTML** file in the sidebar. Analysis takes a minute or
+more: every passage has to be embedded.
 
-## Reproduce the results
+Getting a filing: [sec.gov/edgar/search](https://www.sec.gov/edgar/search) ->
+search the company -> filter to Form 10-K -> open the filing -> download the
+first `.htm` document (named like `tsla-20241231.htm`). Save it as
+"Webpage, HTML Only", not "Webpage, Complete".
+
+### Running one stage at a time
 
 ```bash
-python -m pytest tests/ -q                            # 84 tests
-
-curl -L -o data/finqa/test.json \
-  https://raw.githubusercontent.com/czyssrs/FinQA/main/dataset/test.json
-python -m retrieval.eval_retrieval --split test --limit 200   # ~25 min
-
-python -m flagging.faithfulness_check --canary
-python -m flagging.eval_flagging --report             # uses data/labels/
+python -m retrieval.parser data/filings/aapl-2025.htm
+python -m flagging.anomaly_detector aapl-2025
 ```
 
-`data/labels/` holds the hand labels the flagging evaluation depends on. They
-are the one thing in this repo that cannot be regenerated.
+The parser prints which method it used to recover page numbers, which is worth
+checking on a new filing.
 
 ---
 
-## Layout
+## What the dashboard shows
 
-```
-retrieval/     parser · linearizer · chunker · indexer · reranker
-               retrieve · eval_retrieval · fetch_filing
-flagging/      metric_extractor · anomaly_detector · generator
-               faithfulness_check · eval_flagging
-pipeline.py    runs every stage, skipping what is already current
-app.py         Streamlit dashboard
-config.yaml    every threshold, asserted against the code by tests
-tests/         84 tests, each tied to a bug that occurred
-```
+- **Filing header** — company, ticker, fiscal year, period end, pages and
+  passages, read from the filing's own inline XBRL tags
+- **Each concern** — the rule that fired, its severity, a plain verdict, and
+  the figures behind it with the periods used shaded, so the arithmetic can be
+  redone by hand
+- **The cited passage** — with its page, Item and entailment score
+- **A filter** — everything, explained, or left unexplained
+- **A charts view** — concerns by severity, which rules fired, and what moved
+  against what
+- **A printable report** — opens in the browser; print, or save as PDF
 
-Diagnostics used during development and kept because they are still useful:
-`inspect_parse.py`, `check_filings.py`, `diagnose.py`, `debug_scale.py`,
-`why_supported.py`.
+---
+
+## Evaluation
+
+Retrieval, measured on FinQA:
+
+| Setting                                        | Bi-encoder | With cross-encoder | Gain       |
+| ---------------------------------------------- | ---------- | ------------------ | ---------- |
+| Easy pool (distractors from the same example)  | 0.752      | 0.798              | +6.1%      |
+| Pooled (distractors from the whole collection) | 0.489      | 0.580              | **+18.6%** |
+
+Recall@3 0.533, Recall@20 0.700, Recall@50 0.774. The gap between Recall@3 and
+Recall@20 puts the bottleneck in the reranker, not the retriever.
+
+Detection and verification, on real filings:
+
+| Measure                                      | Result                                               |
+| -------------------------------------------- | ---------------------------------------------------- |
+| Detection precision                          | **0.562** (9 of 16 hand-labelled flags were genuine) |
+| Flags the filing explains at all             | 0.375                                                |
+| Cited passage genuinely explains the finding | 0.667                                                |
+| Verifier on adversarial claim/evidence pairs | 6 / 6                                                |
+
+Apple 2025: 7 concerns, 3 explained, 4 left unexplained. Coca-Cola, never
+opened during development: 1 concern, operating cash flow down 41.3%,
+explanation found on page 56 with entailment 0.93.
+
+**There is no recall or F1 for detection.** Both need a complete list of every
+true anomaly in a 10-K, and no such list exists. Only precision is measurable,
+and we report it as measured.
 
 ---
 
 ## Limitations
 
-**HTML only.** SEC serves filings as HTML with inline XBRL, which parses far
-more reliably than PDF. PDF upload is not implemented.
+- About four flags in ten are not worth reading.
+- Recall is unknown, for the reason above.
+- In roughly 3 cases out of 10 the correct passage is not in the shortlist at all.
+- Thresholds were tuned on three filings.
+- English HTML 10-Ks only (US GAAP, inline XBRL). No PDF, no IFRS, no 10-Q.
+- Page numbers are recovered heuristically: from a footer pattern where one
+  exists, otherwise by counting page-break elements and calibrating that count
+  against the page numbers the filing prints. Where a filing prints none, the
+  number can run ahead by the length of the unnumbered front matter. The Item
+  label and the passage text are always exact.
+- "Unexplained" merges two cases — the retrieval missed the passage, and
+  management genuinely said nothing. The system does not distinguish them.
 
-**The parser generalises, but only after being made to.** It was built against
-one Apple filing, looked correct, and then failed silently on three others —
-producing 1,078 confidently mislabelled chunks for Microsoft with no error
-raised. Apple states units in a statement title, Microsoft inside the table,
-Nvidia labels year columns as `Jan 25, 2026` rather than `2026`, and none of
-the three besides Apple prints a page footer. Each was found by testing on
-unfamiliar filers, not by inspection.
+## Next steps
 
-**Relevance scores are not comparable across queries.** Over 200 questions, a
-correct top-1 answer scored 1.03 while a false positive scored 3.34, and the
-score distributions for correct and incorrect answers overlap. A single
-threshold cannot separate them, which is why support requires a lexical anchor
-and a source-type check in addition to the score.
-
-**A wider shortlist does not help.** Raising the first-stage shortlist from 20
-to 50 lifted pooled Recall@50 to 0.774 from a Recall@20 ceiling of 0.700, but
-left Recall@3 unchanged. Since only the top 3 reach the generator, the extra
-recall is unusable. The bottleneck is the bi-encoder's representation, not the
-funnel width.
-
-**Year-over-year magnitude is a weak detector alone.** A flat 15% threshold
-flagged six Microsoft metrics that had all simply grown with the company.
-Suppressing metrics that move with revenue reduced those six to two.
-
-**Small samples.** Detection precision rests on 16 labels across three filings,
-and one rule (`divergence`) has a single labelled instance.
-
-**Not an audit.** FinGuard flags areas for review. It is not a fraud detector,
-an auditor, or investment advice; every concern needs human judgement.
+Fetching a filing from EDGAR by URL; reading PDF filings; fine-tuning the
+reranker on financial text; comparing a company against its own prior-year
+filing; a larger labelled evaluation.
 
 ---
 
-## Related work
+## Who built what
 
-HC-RAG ([arXiv 2608.12335](https://arxiv.org/abs/2608.12335)) improves evidence
-retrieval over filings with a typed document-section-unit graph. CiteCheck
-([arXiv 2605.27700](https://arxiv.org/abs/2605.27700)) detects fabricated
-references in AI-generated text — verifying that citations point to real works,
-explicitly not that they support the surrounding claim. Claim-to-source
-alignment is the separate problem this project's verification step addresses.
+|                    |                                                                                                                                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Ahmed Mohammed** | Filing parser with page and section recovery; table linearization and scale resolution; chunking; FAISS index; cross-encoder reranking; retrieval evaluation against FinQA                                               |
+| **Jay**            | Metric extraction and canonicalisation; the five anomaly rules and their thresholds; query generation and the support test; explanation generation and output validation; faithfulness verification; Streamlit dashboard |
+| **Joint**          | System design and the interface between the two halves; configuration and tests; evaluation labelling; the report                                                                                                        |
 
-FinGuard differs in combining arithmetic-driven proactive detection with
-claim-level verification of each generated explanation against its citation.
+---
+
+FinGuard flags areas for review. It is not an audit, a fraud detector, or
+investment advice; every concern needs a human judgement.
